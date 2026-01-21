@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/nexflow
+    username: nexflow
+    password: nexflow
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true

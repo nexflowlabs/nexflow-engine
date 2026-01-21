@@ -1,0 +1,39 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>io.nexflow</groupId>
+  <artifactId>nexflow-engine</artifactId>
+  <version>0.1.0</version>
+  <packaging>pom</packaging>
+
+  <!-- ✅ Centralized version management -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>3.2.0</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+
+      <!-- Lombok BOM -->
+      <dependency>
+        <groupId>org.projectlombok</groupId>
+        <artifactId>lombok</artifactId>
+        <version>1.18.30</version>
+        <scope>provided</scope>
+      </dependency>
+
+    </dependencies>
+  </dependencyManagement>
+
+  <modules>
+    <module>engine-app</module>
+    <module>engine-core</module>
+    <module>engine-api</module>
+    <module>engine-persistence</module>
+    <module>engine-sdk</module>
+  </modules>
+
+</project>
