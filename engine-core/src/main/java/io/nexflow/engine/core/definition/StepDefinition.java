@@ -23,6 +23,12 @@ public class StepDefinition {
     // END
     private String status;
 
+    // AI_DECISION
+    private String promptKey;
+    private Double confidenceThreshold;
+    private String onHighConfidence;
+    private String onLowConfidence;
+
     public StepType getType() {
         return type;
     }
@@ -118,5 +124,14 @@ public class StepDefinition {
     public void setStatus(String status) {
         this.status = status;
     }
+
+    public String getPromptKey() { return promptKey; }
+    public void setPromptKey(String promptKey) { this.promptKey = promptKey; }
+    public Double getConfidenceThreshold() { return confidenceThreshold; }
+    public void setConfidenceThreshold(Double confidenceThreshold) { this.confidenceThreshold = confidenceThreshold; }
+    public String getOnHighConfidence() { return onHighConfidence; }
+    public void setOnHighConfidence(String onHighConfidence) { this.onHighConfidence = onHighConfidence; }
+    public String getOnLowConfidence() { return onLowConfidence; }
+    public void setOnLowConfidence(String onLowConfidence) { this.onLowConfidence = onLowConfidence; }
 }
 

@@ -8,14 +8,8 @@ import io.nexflow.engine.core.definition.WorkflowDefinition;
 import io.nexflow.engine.core.runtime.ExecutionContext;
 import io.nexflow.engine.core.runtime.TransitionResult;
 import io.nexflow.engine.core.runtime.WorkflowRuntime;
-import io.nexflow.engine.persistence.entity.TaskExecutionEntity;
-import io.nexflow.engine.persistence.entity.WaitExecutionEntity;
-import io.nexflow.engine.persistence.entity.WorkflowDefinitionEntity;
-import io.nexflow.engine.persistence.entity.WorkflowExecutionEntity;
-import io.nexflow.engine.persistence.repository.TaskExecutionRepository;
-import io.nexflow.engine.persistence.repository.WaitExecutionRepository;
-import io.nexflow.engine.persistence.repository.WorkflowDefinitionRepository;
-import io.nexflow.engine.persistence.repository.WorkflowExecutionRepository;
+import io.nexflow.engine.persistence.entity.*;
+import io.nexflow.engine.persistence.repository.*;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -23,6 +17,7 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -35,7 +30,69 @@ public class WorkflowRuntimeService {
     private final WorkflowDefinitionRepository definitionRepo;
     private final TaskExecutionRepository taskRepo;
     private final WaitExecutionRepository waitRepo;
+    private final IdempotencyKeyRepository idemRepo;
     private final ObjectMapper objectMapper;
+
+    @Transactional
+    public UUID startIdempotent(
+            String workflowName,
+            String idempotencyKey,
+            Map<String, Object> input
+    ) throws Exception {
+
+        Optional<IdempotencyKeyEntity> existing =
+                idemRepo.findByScopeAndKey("WORKFLOW_START", idempotencyKey);
+
+        if (existing.isPresent()) {
+            return existing.get().getReferenceId();
+        }
+
+        WorkflowDefinitionEntity def =
+                definitionRepo.findByLatestVersion(workflowName);
+
+        WorkflowExecutionEntity exec =
+                startExecutionInternal(def, input);
+
+        idemRepo.save(
+                IdempotencyKeyEntity.builder()
+                        .id(UUID.randomUUID())
+                        .scope("WORKFLOW_START")
+                        .key(idempotencyKey)
+                        .referenceId(exec.getId())
+                        .createdAt(Instant.now())
+                        .build()
+        );
+
+        return exec.getId();
+    }
+
+    private WorkflowExecutionEntity startExecutionInternal(
+            WorkflowDefinitionEntity defEntity,
+            Map<String, Object> input
+    ) throws Exception {
+
+        WorkflowDefinition workflow =
+                objectMapper.readValue(defEntity.getDefinitionJson(), WorkflowDefinition.class);
+
+        WorkflowExecutionEntity exec = WorkflowExecutionEntity.builder()
+                .id(UUID.randomUUID())
+                .workflowName(defEntity.getName())
+                .workflowVersion(defEntity.getVersion())
+                .status("RUNNING")
+                .currentStep(workflow.getStart())
+                .contextJson(objectMapper.writeValueAsString(input))
+                .startedAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+
+        executionRepo.save(exec);
+
+        advance(exec, workflow);
+
+        return exec;
+    }
+
+
 
     /* ---------------- START ---------------- */
 

@@ -1,7 +1,6 @@
 package io.nexflow.engine.app.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.nexflow.engine.app.command.WorkflowCommandService;
 import io.nexflow.engine.app.runtime.WorkflowRuntimeService;
 import io.nexflow.engine.persistence.entity.TaskExecutionEntity;
 import io.nexflow.engine.persistence.repository.TaskExecutionRepository;

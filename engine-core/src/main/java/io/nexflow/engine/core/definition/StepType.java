@@ -4,5 +4,6 @@ public enum StepType {
     TASK,
     DECISION,
     WAIT,
-    END
+    END,
+    AI_DECISION
 }

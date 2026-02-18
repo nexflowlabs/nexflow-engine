@@ -1,202 +1,63 @@
-# 🚀 Nexflow Engine
+# Nexflow Engine
 
-Nexflow Engine is a **headless, event-driven workflow runtime** for building **durable, long-running, and idempotent workflows**.
+Nexflow Engine is a **headless, event-driven workflow runtime** for building **durable, long-running, and idempotent workflows**. It is designed for backend engineers and platform teams who need **reliable orchestration** without UI or SaaS lock-in.
 
-It is designed for backend engineers and platform teams who need **reliable orchestration** without UI or SaaS lock-in.
+> Nexflow Engine is the **kernel** of the Nexflow platform. Studio, Cloud, and enterprise products are built **on top of this engine**, not inside it.
 
-> Nexflow Engine is the **kernel** of the Nexflow platform.  
-> Studio, Cloud, and enterprise products are built **on top of this engine**, not inside it.
-
----
-
-## ✨ Key Characteristics
+## Features
 
 - Headless & embeddable
 - Event-driven execution model
 - Durable state (crash-safe)
-- Deterministic workflows
 - Built-in retries & failure handling
 - Time & event-based waits
 - Idempotency at all boundaries
+- Built-in **aiDecision** step (branch on AI confidence)
+- H2 dev profile; Postgres for production
 
----
+## Repository layout
 
-## 🧠 What Nexflow Engine Is / Is Not
-
-### ✅ Is
-- A workflow runtime
-- A state machine executor
-- A task orchestration engine
-- A foundation for higher-level products
-
-### ❌ Is Not
-- A low-code / no-code tool
-- A visual workflow builder
-- A message broker
-- A cron replacement only
-
----
-
-## 🏗 High-Level Architecture
-
-```mermaid
-flowchart TB
-    Client[Client / API / Event] --> App[engine-app adapters]
-    App --> Runtime[WorkflowRuntimeService]
-    Runtime --> Core[engine-core Runtime]
-    Core --> DB[(PostgreSQL)]
-    Workers[External Workers] <-->|Tasks| App
+```
+nexflow-engine/
+├── engine-core/          # Pure runtime (no Spring/JPA)
+├── engine-persistence/   # JPA entities & mappers to domain
+├── engine-app/          # REST, scheduling, config
+├── engine-api/          # API contracts
+├── examples/            # basic-workflow, ai-decision-workflow
+├── docker/              # docker-compose, mock-ai-server
+├── docs/                # DSL-v1, Execution-Model, Built-in-Steps
+├── README.md
+├── LICENSE
+├── CONTRIBUTING.md
+└── ARCHITECTURE.md
 ```
 
----
+## Docs
 
-## 📦 Module Architecture
+- [ARCHITECTURE.md](ARCHITECTURE.md) – Layering, domain vs persistence, built-in vs plugins
+- [docs/Execution-Model.md](docs/Execution-Model.md) – Execution guarantees, idempotency, retries
+- [docs/Built-in-Steps.md](docs/Built-in-Steps.md) – task, decision, wait, end, aiDecision
+- [docs/DSL-v1.md](docs/DSL-v1.md) – Workflow DSL v1
 
-```mermaid
-flowchart LR
-    Core[engine-core] --> App[engine-app]
-    API[engine-api] --> App
-    Persistence[engine-persistence] --> App
-    SDK[engine-sdk] --> Workers
-```
+## Quick start
 
-### Module Responsibilities
+**Prerequisites:** Java 21, Maven 3.9+. Lombok is used; if command-line build fails with annotation processor errors, build from your IDE (with Lombok plugin) or add `maven-compiler-plugin` `annotationProcessorPaths` for Lombok in the modules that use it.
 
-| Module | Responsibility |
-|------|----------------|
-| engine-core | Pure workflow runtime (no Spring) |
-| engine-api | API contracts & models |
-| engine-app | REST, scheduling, orchestration |
-| engine-persistence | JPA entities & repositories |
-| engine-sdk | Worker & client SDK |
-
----
-
-## 🧩 Core Concepts
-
-| Concept | Description |
-|------|------------|
-| Workflow | Deterministic state machine |
-| Step | Unit of execution |
-| Task | External work |
-| Execution | One workflow instance |
-| Wait | Time or event pause |
-| Retry | Engine-controlled retry |
-| Idempotency | Safe duplicate handling |
-
----
-
-## 📜 Workflow DSL (v1)
-
-Workflows are defined in JSON or YAML.
-
-```json
-{
-  "name": "hello-workflow",
-  "version": 1,
-  "start": "say_hello",
-  "steps": {
-    "say_hello": {
-      "type": "task",
-      "task": "helloTask",
-      "onSuccess": "end"
-    },
-    "end": {
-      "type": "end",
-      "status": "COMPLETED"
-    }
-  }
-}
-```
-
----
-
-## 🔁 Execution Model
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Engine
-    participant Worker
-
-    Client->>Engine: Start Workflow
-    Engine->>Engine: Create execution
-    Engine->>Worker: Dispatch task
-    Worker->>Engine: Complete task
-    Engine->>Engine: Resume workflow
-    Engine->>Client: Workflow completed
-```
-
----
-
-## ⏳ WAIT Semantics
-
-### Time-based WAIT
-```json
-{
-  "type": "wait",
-  "duration": "PT5M",
-  "next": "retry_step"
-}
-```
-
-### Event-based WAIT
-```json
-{
-  "type": "wait",
-  "event": "PAYMENT_RECEIVED",
-  "next": "ship_order"
-}
-```
-
----
-
-## 🔐 Idempotency
-
-Idempotency is enforced using durable keys in the database.
-
-| Boundary | Scope |
-|--------|-------|
-| Workflow start | WORKFLOW_START |
-| Task completion | TASK_COMPLETE |
-| Event resume | EVENT_RESUME |
-
----
-
-## 👷 Worker Model
-
-```java
-public interface NexflowWorker {
-    String taskName();
-    Map<String, Object> execute(Map<String, Object> input);
-}
-```
-
----
-
-## 🚀 Getting Started
-
+**With H2 (no Postgres):**
 ```bash
 mvn clean install
-cd engine-app
-mvn spring-boot:run
+cd engine-app && mvn spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
----
+**With Docker (Postgres + Mock AI):**
+```bash
+cd docker && docker-compose up -d postgres mock-ai
+cd ../engine-app && mvn spring-boot:run -Dspring-boot.run.profiles=prod
+# Set nexflow.ai-decision.url=http://localhost:8090/confidence for aiDecision steps
+```
 
-## 🛣 Roadmap
+See [docker/README.md](docker/README.md) for details.
 
-- Parallel steps
-- Sub-workflows
-- Studio (visual builder)
-- Cloud (managed SaaS)
+## License
 
----
-
-## 📄 License
-
-Apache License 2.0
-
----
-
-> Make failures boring. Make retries safe. Make workflows explicit.
+Apache License 2.0. See [LICENSE](LICENSE).

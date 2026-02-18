@@ -1,0 +1,20 @@
+# H2 in-memory profile for local/dev and examples
+spring:
+  datasource:
+    url: jdbc:h2:mem:nexflow;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  h2:
+    console:
+      enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+    show-sql: false
+
+# Optional: point to mock AI server for aiDecision steps
+# nexflow:
+#   ai-decision:
+#     url: http://localhost:8090/confidence

@@ -1,0 +1,29 @@
+{
+  "name": "ai-routing-workflow",
+  "version": 1,
+  "description": "Workflow with aiDecision step (requires nexflow.ai-decision.url)",
+  "start": "classify",
+  "steps": {
+    "classify": {
+      "type": "AI_DECISION",
+      "promptKey": "intent",
+      "confidenceThreshold": 0.8,
+      "onHighConfidence": "handle_confident",
+      "onLowConfidence": "human_review"
+    },
+    "handle_confident": {
+      "type": "TASK",
+      "task": "processTask",
+      "onSuccess": "end"
+    },
+    "human_review": {
+      "type": "TASK",
+      "task": "reviewTask",
+      "onSuccess": "end"
+    },
+    "end": {
+      "type": "END",
+      "status": "COMPLETED"
+    }
+  }
+}

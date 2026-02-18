@@ -9,4 +9,6 @@ public interface WorkflowDefinitionRepository
         extends JpaRepository<WorkflowDefinitionEntity, UUID> {
 
     WorkflowDefinitionEntity findByNameAndVersion(String workflowName, int workflowVersion);
+
+    WorkflowDefinitionEntity findByLatestVersion(String workflowName);
 }

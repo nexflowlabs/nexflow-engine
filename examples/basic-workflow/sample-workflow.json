@@ -1,0 +1,17 @@
+{
+  "name": "hello-workflow",
+  "version": 1,
+  "description": "Basic linear workflow",
+  "start": "say_hello",
+  "steps": {
+    "say_hello": {
+      "type": "TASK",
+      "task": "helloTask",
+      "onSuccess": "end"
+    },
+    "end": {
+      "type": "END",
+      "status": "COMPLETED"
+    }
+  }
+}
