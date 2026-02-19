@@ -1,7 +1,7 @@
 {
   "name": "ai-routing-workflow",
   "version": 1,
-  "description": "Workflow with aiDecision step (requires nexflow.ai-decision.url)",
+  "description": "Legacy type-based DSL (reference only). Engine uses registry-driven steps from DB with step_type and config_json.",
   "start": "classify",
   "steps": {
     "classify": {
@@ -11,19 +11,8 @@
       "onHighConfidence": "handle_confident",
       "onLowConfidence": "human_review"
     },
-    "handle_confident": {
-      "type": "TASK",
-      "task": "processTask",
-      "onSuccess": "end"
-    },
-    "human_review": {
-      "type": "TASK",
-      "task": "reviewTask",
-      "onSuccess": "end"
-    },
-    "end": {
-      "type": "END",
-      "status": "COMPLETED"
-    }
+    "handle_confident": { "type": "TASK", "task": "processTask", "onSuccess": "end" },
+    "human_review": { "type": "TASK", "task": "reviewTask", "onSuccess": "end" },
+    "end": { "type": "END", "status": "COMPLETED" }
   }
 }

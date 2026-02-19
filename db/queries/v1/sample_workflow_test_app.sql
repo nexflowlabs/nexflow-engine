@@ -44,9 +44,9 @@ BEGIN
   INSERT INTO workflow_step_definition (workflow_definition_id, step_id, step_name, step_type, config_json, branches_json)
   VALUES (wf_id, 4, 'script_step', 'script', '{"language":"javascript","mode":"IN_PROCESS","code":"success({ outcome: ''success'' });"}', '{"success": 5}');
 
-  -- Step 5: httpCall – GET test app approve. Branches: approve -> 7, reject -> 8, success -> 7
+  -- Step 5: httpCall – GET test app approve; optional retry (maxAttempts, backoffSeconds). Branches: approve -> 7, reject -> 8, success -> 7
   INSERT INTO workflow_step_definition (workflow_definition_id, step_id, step_name, step_type, config_json, branches_json)
-  VALUES (wf_id, 5, 'call_test_app', 'httpCall', '{"method":"GET","url":"http://localhost:8081/api/workflow-test/approve"}', '{"approve": 7, "reject": 8, "success": 7}');
+  VALUES (wf_id, 5, 'call_test_app', 'httpCall', '{"method":"GET","url":"http://localhost:8081/api/workflow-test/approve","retry":{"maxAttempts":3,"backoffSeconds":1}}', '{"approve": 7, "reject": 8, "success": 7}');
 
   -- Step 6: transform – merge path from condition FALSE. Branches: success -> 7
   INSERT INTO workflow_step_definition (workflow_definition_id, step_id, step_name, step_type, config_json, branches_json)
