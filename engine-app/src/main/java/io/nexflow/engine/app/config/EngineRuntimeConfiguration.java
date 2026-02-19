@@ -11,12 +11,20 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
 
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
- * Wires registry-driven runtime and optional AI evaluator.
+ * Wires registry-driven runtime, workflow async executor, and optional AI evaluator.
  */
 @Configuration
 public class EngineRuntimeConfiguration {
+
+    /** Virtual-thread executor for running workflow advance and webhook resume off the request thread. */
+    @Bean(name = "workflowExecutor")
+    public ExecutorService workflowExecutor() {
+        return Executors.newVirtualThreadPerTaskExecutor();
+    }
 
     @Bean
     public RegistryDrivenRuntime registryDrivenRuntime(StepRegistry stepRegistry) {

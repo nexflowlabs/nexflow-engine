@@ -7,9 +7,8 @@ import com.nexflow.sdk.core.StepResult;
 import com.nexflow.sdk.core.WorkflowStep;
 import io.nexflow.engine.core.script.ScriptExecutionClient;
 import io.nexflow.engine.core.script.ScriptExecutionResult;
-import org.graalvm.polyglot.Context;
-import org.graalvm.polyglot.HostAccess;
-import org.graalvm.polyglot.Value;
+import org.mozilla.javascript.Context;
+import org.mozilla.javascript.Scriptable;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -21,9 +20,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Built-in step: JavaScript execution (GraalVM). Config: language, mode (IN_PROCESS | ISOLATED), code, timeoutMs (optional, default 200).
+ * Built-in step: JavaScript execution (Rhino; runs on any JDK). Config: language, mode (IN_PROCESS | ISOLATED), code, timeoutMs (optional, default 200).
  * Script must return via helper functions: success(outputs), failure(), branch(name).
- * In-process sandbox: no Java interop, no host/IO/reflection; only inputs, stepConfig, and helpers.
+ * In-process: sandboxed JS with only inputs, stepConfig, and helpers (no Java/IO/reflection).
  */
 public final class ScriptStep implements WorkflowStep {
 
@@ -150,36 +149,38 @@ public final class ScriptStep implements WorkflowStep {
                 + "var stepConfig = JSON.parse(" + escapedConfig + "); ";
         String fullScript = preamble + code;
 
-        Context ctx = Context.newBuilder("js")
-                .allowAllAccess(false)
-                .allowHostAccess(HostAccess.NONE)
-                .allowIO(false)
-                .build();
+        ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, THREAD_NAME_SCRIPT);
+            t.setDaemon(true);
+            return t;
+        });
         try {
-            ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, THREAD_NAME_SCRIPT);
-                t.setDaemon(true);
-                return t;
+            Future<Scriptable> future = executor.submit(() -> {
+                Context cx = Context.enter();
+                try {
+                    cx.setLanguageVersion(Context.VERSION_ES6);
+                    Scriptable scope = cx.initStandardObjects();
+                    cx.evaluateString(scope, fullScript, "nexflow-script", 1, null);
+                    Object result = scope.get(SCRIPT_BINDING_RESULT, scope);
+                    return (result instanceof Scriptable) ? (Scriptable) result : null;
+                } finally {
+                    Context.exit();
+                }
             });
-            try {
-                Future<Value> future = executor.submit(() -> ctx.eval("js", fullScript));
-                Value value = future.get(timeoutMs, TimeUnit.MILLISECONDS);
-                return readScriptResult(value, ctx);
-            } catch (TimeoutException e) {
-                LOG.log(Level.WARNING, LOG_PREFIX + "execution exceeded timeout " + timeoutMs + "ms");
-                return StepResult.failure(ERROR_TIMEOUT);
-            } catch (ExecutionException e) {
-                Throwable cause = e.getCause();
-                LOG.log(Level.WARNING, LOG_PREFIX + "execution error: " + (cause != null ? cause.getMessage() : e.getMessage()));
-                return StepResult.failure(cause != null ? cause.getMessage() : "script execution failed");
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return StepResult.failure(ERROR_INTERRUPTED);
-            } finally {
-                executor.shutdownNow();
-            }
+            Scriptable __result = future.get(timeoutMs, TimeUnit.MILLISECONDS);
+            return readScriptResult(__result);
+        } catch (TimeoutException e) {
+            LOG.log(Level.WARNING, LOG_PREFIX + "execution exceeded timeout " + timeoutMs + "ms");
+            return StepResult.failure(ERROR_TIMEOUT);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            LOG.log(Level.WARNING, LOG_PREFIX + "execution error: " + (cause != null ? cause.getMessage() : e.getMessage()));
+            return StepResult.failure(cause != null ? cause.getMessage() : "script execution failed");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return StepResult.failure(ERROR_INTERRUPTED);
         } finally {
-            ctx.close();
+            executor.shutdownNow();
         }
     }
 
@@ -198,21 +199,20 @@ public final class ScriptStep implements WorkflowStep {
         return sb.toString();
     }
 
-    private static StepResult readScriptResult(Value value, Context ctx) {
+    private static StepResult readScriptResult(Scriptable __result) {
         try {
-            Value bindings = ctx.getBindings("js");
-            Value __result = bindings.getMember(SCRIPT_BINDING_RESULT);
-            if (__result == null || __result.isNull()) {
+            if (__result == null) {
                 LOG.log(Level.WARNING, LOG_PREFIX + "script did not call success(), failure(), or branch()");
                 return StepResult.failure(ERROR_MUST_CALL_HELPERS);
             }
-            String status = __result.getMember(SCRIPT_RESULT_STATUS) != null ? __result.getMember(SCRIPT_RESULT_STATUS).asString() : null;
+            Object statusObj = __result.get(SCRIPT_RESULT_STATUS, __result);
+            String status = (statusObj != null && statusObj != Context.getUndefinedValue()) ? Context.toString(statusObj) : null;
             if (status == null) return StepResult.failure(ERROR_INVALID_RESULT);
             switch (status) {
                 case SCRIPT_STATUS_SUCCESS: {
-                    Value outputsVal = __result.getMember(SCRIPT_RESULT_OUTPUTS);
-                    Map<String, Object> outputs = outputsVal != null && outputsVal.hasMembers()
-                            ? valueToMap(outputsVal) : Collections.emptyMap();
+                    Object outputsObj = __result.get(SCRIPT_RESULT_OUTPUTS, __result);
+                    Map<String, Object> outputs = (outputsObj instanceof Scriptable)
+                            ? scriptableToMap((Scriptable) outputsObj) : Collections.emptyMap();
                     Map<String, Object> mutable = new HashMap<>(outputs);
                     if (!mutable.containsKey(OUTCOME_KEY)) {
                         mutable.put(OUTCOME_KEY, "success");
@@ -222,8 +222,8 @@ public final class ScriptStep implements WorkflowStep {
                 case SCRIPT_STATUS_FAILURE:
                     return StepResult.failure();
                 case SCRIPT_STATUS_BRANCH: {
-                    Value branchVal = __result.getMember(SCRIPT_RESULT_BRANCH);
-                    String branch = branchVal != null ? branchVal.asString() : null;
+                    Object branchObj = __result.get(SCRIPT_RESULT_BRANCH, __result);
+                    String branch = (branchObj != null && branchObj != Context.getUndefinedValue()) ? Context.toString(branchObj) : null;
                     if (branch == null || branch.isBlank()) {
                         return StepResult.failure(ERROR_BRANCH_BLANK);
                     }
@@ -239,22 +239,32 @@ public final class ScriptStep implements WorkflowStep {
     }
 
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> valueToMap(Value v) {
+    private static Map<String, Object> scriptableToMap(Scriptable s) {
         try {
-            if (v.hasMembers()) {
-                Map<String, Object> out = new java.util.HashMap<>();
-                for (String key : v.getMemberKeys()) {
-                    Value member = v.getMember(key);
-                    if (member.isString()) out.put(key, member.asString());
-                    else if (member.isNumber()) out.put(key, member.asDouble());
-                    else if (member.isBoolean()) out.put(key, member.asBoolean());
-                    else if (member.isNull()) out.put(key, null);
-                    else if (member.hasMembers()) out.put(key, valueToMap(member));
-                    else out.put(key, member.asString());
+            Map<String, Object> out = new HashMap<>();
+            for (Object id : s.getIds()) {
+                String key = id instanceof String ? (String) id : String.valueOf(id);
+                Object val = s.get(key, s);
+                if (val == null || val == Context.getUndefinedValue()) {
+                    out.put(key, null);
+                } else if (val instanceof Number) {
+                    out.put(key, ((Number) val).doubleValue());
+                } else if (val instanceof String || val instanceof Boolean) {
+                    out.put(key, val);
+                } else if (val instanceof Scriptable) {
+                    Scriptable nested = (Scriptable) val;
+                    if (nested.getClassName().equals("Object") || nested.getClassName().equals("Array")) {
+                        out.put(key, scriptableToMap(nested));
+                    } else {
+                        out.put(key, Context.toString(val));
+                    }
+                } else {
+                    out.put(key, Context.toString(val));
                 }
-                return out;
             }
-        } catch (Exception ignored) { }
-        return Map.of();
+            return out;
+        } catch (Exception ignored) {
+            return Map.of();
+        }
     }
 }

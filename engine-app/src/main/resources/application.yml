@@ -1,15 +1,78 @@
-nexflow:
-  script:
-    # Optional: when set, script step can use mode: ISOLATED and delegate to this worker
-    # worker-endpoint: http://localhost:9090/execute
-
+# ---------------------------------------------------------------------------
+# Application identity
+# ---------------------------------------------------------------------------
 spring:
+  application:
+    name: nexflow-engine
+
+  # ---------------------------------------------------------------------------
+  # Java 21 virtual threads (lightweight threads for request handling)
+  # ---------------------------------------------------------------------------
+  threads:
+    virtual:
+      enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Data source & JPA
+  # ---------------------------------------------------------------------------
   datasource:
-    url: jdbc:postgresql://localhost:5432/nexflow
-    username: nexflow
-    password: nexflow
+    url: jdbc:postgresql://localhost:5432/nexflow-engine
+    username: postgres
+    password: postgres123
 
   jpa:
     hibernate:
       ddl-auto: validate
     show-sql: true
+
+# ---------------------------------------------------------------------------
+# Server
+# ---------------------------------------------------------------------------
+server:
+  port: 8080
+  servlet:
+    context-path: /
+  compression:
+    enabled: true
+  error:
+    include-message: always
+
+# ---------------------------------------------------------------------------
+# Actuator (health, info, metrics; base path: /actuator)
+# ---------------------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized   # use 'always' to see DB/disk details in response
+      show-components: when-authorized
+    info:
+      enabled: true
+  info:
+    env:
+      enabled: true
+
+# ---------------------------------------------------------------------------
+# OpenAPI / Swagger UI: http://localhost:8080/swagger-ui.html, JSON: /v3/api-docs
+# ---------------------------------------------------------------------------
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+# ---------------------------------------------------------------------------
+# Nexflow Engine
+# ---------------------------------------------------------------------------
+nexflow:
+  # When true, scheduled job runs to complete TIME-type waits (wait_until elapsed). Default: false.
+  wait-scheduler:
+    enabled: false
+
+  script:
+    # Optional: when set, script step can use mode: ISOLATED and delegate to this worker
+    # worker-endpoint: http://localhost:9090/execute

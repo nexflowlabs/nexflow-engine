@@ -10,5 +10,8 @@ public interface StepExecutionRepository
 
     /** List all step executions for a workflow execution, in start order. */
     List<StepExecutionEntity> findByExecutionIdOrderByStartedAtAsc(Long executionId);
+
+    /** Count how many times this step has been run for this execution (for retry attempt number). */
+    long countByExecutionIdAndStepId(Long executionId, Integer stepId);
 }
 

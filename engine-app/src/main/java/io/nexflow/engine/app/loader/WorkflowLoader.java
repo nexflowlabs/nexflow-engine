@@ -5,29 +5,25 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.nexflow.engine.core.definition.StepDefinition;
 import io.nexflow.engine.core.definition.WorkflowDefinition;
 import io.nexflow.engine.persistence.entity.WorkflowDefinitionEntity;
-import io.nexflow.engine.persistence.entity.WorkflowStepBranchDefinitionEntity;
 import io.nexflow.engine.persistence.entity.WorkflowStepDefinitionEntity;
 import io.nexflow.engine.persistence.repository.WorkflowDefinitionRepository;
-import io.nexflow.engine.persistence.repository.WorkflowStepBranchDefinitionRepository;
 import io.nexflow.engine.persistence.repository.WorkflowStepDefinitionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Loads a workflow by workflow_definition_id and builds an in-memory graph from
- * workflow_definition, workflow_step_definition, and workflow_step_branch_definition.
+ * workflow_definition and workflow_step_definition (branches in branches_json).
  * No DB queries during step transitions.
  */
 @Component
 @RequiredArgsConstructor
-public class NormalizedWorkflowLoader {
+public class WorkflowLoader {
 
     private final WorkflowDefinitionRepository definitionRepo;
     private final WorkflowStepDefinitionRepository stepDefRepo;
-    private final WorkflowStepBranchDefinitionRepository branchDefRepo;
     private final ObjectMapper objectMapper;
 
     /**
@@ -42,19 +38,11 @@ public class NormalizedWorkflowLoader {
         }
         List<WorkflowStepDefinitionEntity> steps = stepDefRepo.findByWorkflowDefinitionIdOrderByStepId(workflowDefinitionId);
         if (steps.isEmpty()) return null;
-        List<Long> stepDefIds = steps.stream().map(WorkflowStepDefinitionEntity::getId).toList();
-        List<WorkflowStepBranchDefinitionEntity> branches = branchDefRepo.findByWorkflowStepDefinitionIdIn(stepDefIds);
-        Map<Long, List<WorkflowStepBranchDefinitionEntity>> branchesByStepDefId = branches.stream()
-                .collect(Collectors.groupingBy(WorkflowStepBranchDefinitionEntity::getWorkflowStepDefinitionId));
 
         List<StepDefinition> stepDefs = new ArrayList<>();
         for (WorkflowStepDefinitionEntity se : steps) {
             Map<String, Object> config = parseConfig(se.getConfigJson());
-            List<WorkflowStepBranchDefinitionEntity> stepBranches = branchesByStepDefId.getOrDefault(se.getId(), List.of());
-            Map<String, Integer> branchMap = new HashMap<>();
-            for (WorkflowStepBranchDefinitionEntity b : stepBranches) {
-                branchMap.put(b.getBranchKey(), b.getTargetStepId());
-            }
+            Map<String, Integer> branchMap = parseBranches(se.getBranchesJson());
             StepDefinition sd = new StepDefinition(
                     se.getStepId(),
                     se.getStepName() != null ? se.getStepName() : "",
@@ -82,7 +70,28 @@ public class NormalizedWorkflowLoader {
         }
     }
 
-    /** In-memory workflow graph + start step id. */
+    /** Parse branches_json to branchKey -> targetStepId (null = workflow complete). */
+    private Map<String, Integer> parseBranches(String branchesJson) {
+        if (branchesJson == null || branchesJson.isBlank()) return Map.of();
+        try {
+            Map<String, Object> raw = objectMapper.readValue(branchesJson, new TypeReference<Map<String, Object>>() {});
+            if (raw == null) return Map.of();
+            Map<String, Integer> out = new HashMap<>();
+            for (Map.Entry<String, Object> e : raw.entrySet()) {
+                if (e.getKey() == null) continue;
+                if (e.getValue() == null) {
+                    out.put(e.getKey(), null);
+                } else if (e.getValue() instanceof Number n) {
+                    out.put(e.getKey(), n.intValue());
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    /** In-memory workflow graph + start step id. Internal to loader; not exposed to callers. */
     public static final class LoadedWorkflow {
         private final WorkflowDefinitionEntity entity;
         private final WorkflowDefinition definition;

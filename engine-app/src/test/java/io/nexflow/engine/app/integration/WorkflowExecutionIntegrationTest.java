@@ -5,11 +5,9 @@ import io.nexflow.engine.app.publish.WorkflowPublishService;
 import io.nexflow.engine.app.runtime.WorkflowRuntimeService;
 import io.nexflow.engine.persistence.entity.WorkflowDefinitionEntity;
 import io.nexflow.engine.persistence.entity.WorkflowExecutionEntity;
-import io.nexflow.engine.persistence.entity.WorkflowStepBranchDefinitionEntity;
 import io.nexflow.engine.persistence.entity.WorkflowStepDefinitionEntity;
 import io.nexflow.engine.persistence.repository.WorkflowDefinitionRepository;
 import io.nexflow.engine.persistence.repository.WorkflowExecutionRepository;
-import io.nexflow.engine.persistence.repository.WorkflowStepBranchDefinitionRepository;
 import io.nexflow.engine.persistence.repository.WorkflowStepDefinitionRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -44,8 +42,6 @@ class WorkflowExecutionIntegrationTest {
     @Autowired
     private WorkflowStepDefinitionRepository stepDefRepo;
     @Autowired
-    private WorkflowStepBranchDefinitionRepository branchDefRepo;
-    @Autowired
     private ObjectMapper objectMapper;
 
     @Test
@@ -62,9 +58,9 @@ class WorkflowExecutionIntegrationTest {
         def.setCreatedAt(Instant.now());
         definitionRepo.save(def);
 
-        WorkflowStepDefinitionEntity step1 = WorkflowStepDefinitionEntity.of(def.getId(), 1, "transform", "transform", "{\"newField\":\"done\",\"value\":true}", null);
+        WorkflowStepDefinitionEntity step1 = WorkflowStepDefinitionEntity.of(def.getId(), 1, "transform", "transform", "{\"newField\":\"done\",\"value\":true}");
+        step1.setBranchesJson("{\"success\": null}");
         stepDefRepo.save(step1);
-        branchDefRepo.save(WorkflowStepBranchDefinitionEntity.of(step1.getId(), "success", null));
 
         publishService.publish(def.getId());
 
@@ -94,8 +90,9 @@ class WorkflowExecutionIntegrationTest {
         def.setActive(false);
         def.setCreatedAt(Instant.now());
         definitionRepo.save(def);
-        WorkflowStepDefinitionEntity step1 = stepDefRepo.save(WorkflowStepDefinitionEntity.of(def.getId(), 1, "transform", "transform", "{}", null));
-        branchDefRepo.save(WorkflowStepBranchDefinitionEntity.of(step1.getId(), "success", null));
+        WorkflowStepDefinitionEntity step1 = WorkflowStepDefinitionEntity.of(def.getId(), 1, "transform", "transform", "{}");
+        step1.setBranchesJson("{\"success\": null}");
+        stepDefRepo.save(step1);
         publishService.publish(def.getId());
 
         Long executionId = runtimeService.startIdempotent(workflowName, "idem-bind-" + UUID.randomUUID(), Map.of());
@@ -116,8 +113,9 @@ class WorkflowExecutionIntegrationTest {
         def.setActive(false);
         def.setCreatedAt(Instant.now());
         definitionRepo.save(def);
-        WorkflowStepDefinitionEntity step1 = stepDefRepo.save(WorkflowStepDefinitionEntity.of(def.getId(), 1, "step1", "transform", "{}", null));
-        branchDefRepo.save(WorkflowStepBranchDefinitionEntity.of(step1.getId(), "success", null));
+        WorkflowStepDefinitionEntity step1 = WorkflowStepDefinitionEntity.of(def.getId(), 1, "step1", "transform", "{}");
+        step1.setBranchesJson("{\"success\": null}");
+        stepDefRepo.save(step1);
 
         publishService.publish(def.getId());
 
@@ -143,15 +141,15 @@ class WorkflowExecutionIntegrationTest {
         def.setCreatedAt(Instant.now());
         definitionRepo.save(def);
 
-        WorkflowStepDefinitionEntity step1 = WorkflowStepDefinitionEntity.of(def.getId(), 1, "condition", "condition", "{\"field\":\"high\",\"operator\":\"==\",\"value\":true}", null);
+        WorkflowStepDefinitionEntity step1 = WorkflowStepDefinitionEntity.of(def.getId(), 1, "condition", "condition", "{\"field\":\"high\",\"operator\":\"==\",\"value\":true}");
+        step1.setBranchesJson("{\"TRUE\": 2, \"FALSE\": 3}");
         stepDefRepo.save(step1);
-        WorkflowStepDefinitionEntity step2 = stepDefRepo.save(WorkflowStepDefinitionEntity.of(def.getId(), 2, "transformHigh", "transform", "{\"newField\":\"branch\",\"value\":\"HIGH\"}", null));
-        WorkflowStepDefinitionEntity step3 = stepDefRepo.save(WorkflowStepDefinitionEntity.of(def.getId(), 3, "transformLow", "transform", "{\"newField\":\"branch\",\"value\":\"LOW\"}", null));
-
-        branchDefRepo.save(WorkflowStepBranchDefinitionEntity.of(step1.getId(), "TRUE", 2));
-        branchDefRepo.save(WorkflowStepBranchDefinitionEntity.of(step1.getId(), "FALSE", 3));
-        branchDefRepo.save(WorkflowStepBranchDefinitionEntity.of(step2.getId(), "success", null));
-        branchDefRepo.save(WorkflowStepBranchDefinitionEntity.of(step3.getId(), "success", null));
+        WorkflowStepDefinitionEntity step2 = WorkflowStepDefinitionEntity.of(def.getId(), 2, "transformHigh", "transform", "{\"newField\":\"branch\",\"value\":\"HIGH\"}");
+        step2.setBranchesJson("{\"success\": null}");
+        stepDefRepo.save(step2);
+        WorkflowStepDefinitionEntity step3 = WorkflowStepDefinitionEntity.of(def.getId(), 3, "transformLow", "transform", "{\"newField\":\"branch\",\"value\":\"LOW\"}");
+        step3.setBranchesJson("{\"success\": null}");
+        stepDefRepo.save(step3);
 
         publishService.publish(def.getId());
 
@@ -177,8 +175,9 @@ class WorkflowExecutionIntegrationTest {
         v1.setActive(false);
         v1.setCreatedAt(Instant.now());
         definitionRepo.save(v1);
-        WorkflowStepDefinitionEntity step1 = stepDefRepo.save(WorkflowStepDefinitionEntity.of(v1.getId(), 1, "transform", "transform", "{\"newField\":\"v\",\"value\":1}", null));
-        branchDefRepo.save(WorkflowStepBranchDefinitionEntity.of(step1.getId(), "success", null));
+        WorkflowStepDefinitionEntity step1 = WorkflowStepDefinitionEntity.of(v1.getId(), 1, "transform", "transform", "{\"newField\":\"v\",\"value\":1}");
+        step1.setBranchesJson("{\"success\": null}");
+        stepDefRepo.save(step1);
         publishService.publish(v1.getId());
 
         Long executionId = runtimeService.startIdempotent(workflowName, "idem-iso-" + UUID.randomUUID(), Map.of());
@@ -194,8 +193,9 @@ class WorkflowExecutionIntegrationTest {
         v2.setActive(false);
         v2.setCreatedAt(Instant.now());
         definitionRepo.save(v2);
-        WorkflowStepDefinitionEntity step2 = stepDefRepo.save(WorkflowStepDefinitionEntity.of(v2.getId(), 1, "transform", "transform", "{\"newField\":\"v\",\"value\":2}", null));
-        branchDefRepo.save(WorkflowStepBranchDefinitionEntity.of(step2.getId(), "success", null));
+        WorkflowStepDefinitionEntity step2 = WorkflowStepDefinitionEntity.of(v2.getId(), 1, "transform", "transform", "{\"newField\":\"v\",\"value\":2}");
+        step2.setBranchesJson("{\"success\": null}");
+        stepDefRepo.save(step2);
         publishService.publish(v2.getId());
 
         exec = executionRepo.findById(executionId).orElseThrow();

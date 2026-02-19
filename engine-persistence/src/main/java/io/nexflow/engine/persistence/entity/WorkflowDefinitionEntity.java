@@ -42,10 +42,6 @@ public class WorkflowDefinitionEntity {
     @Column(nullable = false)
     private boolean active;
 
-    /** Kept for migration; runtime should use normalized step/branch tables. */
-    @Column(name = "definition_json", columnDefinition = "jsonb")
-    private String definitionJson;
-
     private Instant createdAt;
 
     public static final String STATUS_DRAFT = "DRAFT";

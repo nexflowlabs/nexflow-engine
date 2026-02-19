@@ -2,6 +2,8 @@ package io.nexflow.engine.persistence.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Normalized step definition for a workflow.
@@ -37,22 +39,23 @@ public class WorkflowStepDefinitionEntity {
     @Column(name = "step_type", nullable = false)
     private String stepType;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "config_json", columnDefinition = "jsonb")
     private String configJson;
 
-    /** Optional linear next step (DSL integer id). */
-    @Column(name = "next_step_id")
-    private Integer nextStepId;
+    /** Branch key -> target step_id (JSONB, e.g. {"success": 2, "true": 3, "false": 4}). Null value = workflow complete. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "branches_json", columnDefinition = "jsonb")
+    private String branchesJson;
 
     /** Factory for tests and callers that don't use Lombok builder. */
-    public static WorkflowStepDefinitionEntity of(Long workflowDefinitionId, int stepId, String stepName, String stepType, String configJson, Integer nextStepId) {
+    public static WorkflowStepDefinitionEntity of(Long workflowDefinitionId, int stepId, String stepName, String stepType, String configJson) {
         WorkflowStepDefinitionEntity e = new WorkflowStepDefinitionEntity();
         e.setWorkflowDefinitionId(workflowDefinitionId);
         e.setStepId(stepId);
         e.setStepName(stepName);
         e.setStepType(stepType);
         e.setConfigJson(configJson);
-        e.setNextStepId(nextStepId);
         return e;
     }
 }

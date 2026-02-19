@@ -13,6 +13,8 @@ Nexflow Engine is a **headless, event-driven workflow runtime** for building **d
 - Time & event-based waits
 - Idempotency at all boundaries
 - Built-in **aiDecision** step (branch on AI confidence)
+- **Java 21 virtual threads** for request handling and async workflow execution (start and resume return immediately)
+- Workflow definitions cached in memory (extensible to Redis/Hazelcast)
 - H2 dev profile; Postgres for production
 
 ## Repository layout
@@ -34,9 +36,10 @@ nexflow-engine/
 
 ## Docs
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) – Layering, domain vs persistence, built-in vs plugins
-- [docs/Execution-Model.md](docs/Execution-Model.md) – Execution guarantees, idempotency, retries
-- [docs/Built-in-Steps.md](docs/Built-in-Steps.md) – task, decision, wait, end, aiDecision
+- [ARCHITECTURE.md](ARCHITECTURE.md) – Layering, domain vs persistence, WorkflowProvider, virtual threads
+- [docs/API.md](docs/API.md) – REST API: start workflow, resume by wait token, async behavior
+- [docs/Execution-Model.md](docs/Execution-Model.md) – Execution guarantees, idempotency, retries, async execution
+- [docs/Built-in-Steps.md](docs/Built-in-Steps.md) – task, decision, wait, end, aiDecision, script
 - [docs/DSL-v1.md](docs/DSL-v1.md) – Workflow DSL v1
 
 ## Quick start
