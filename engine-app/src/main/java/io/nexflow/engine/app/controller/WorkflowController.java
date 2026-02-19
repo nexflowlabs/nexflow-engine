@@ -6,7 +6,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/workflows")
@@ -27,7 +26,7 @@ public class WorkflowController {
                     .body(Map.of("error", "Idempotency-Key header is required"));
         }
 
-        UUID executionId = runtimeService.startIdempotent(
+        Long executionId = runtimeService.startIdempotent(
                 workflowName,
                 idempotencyKey,
                 input != null ? input : Map.of()

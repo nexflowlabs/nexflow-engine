@@ -1,137 +1,29 @@
 package io.nexflow.engine.core.definition;
 
+import java.util.Map;
+
+/**
+ * v1 DSL step: resolved by "name" in StepRegistry; "id" is the step identifier.
+ * Transitions are via branches only: map of branchName -> target step id (null = workflow complete).
+ */
 public class StepDefinition {
+    private final int id;
+    private final String stepName;  // user-defined
+    private final String type;      // registry lookup
+    private final Map<String, Object> config;
+    private final Map<String, Integer> branches;  // branchName -> target step id; null value = complete
 
-    private StepType type;
-
-    // TASK
-    private String task;
-    private RetryPolicy retry;
-    private String onSuccess;
-    private String onFailure;
-
-    // DECISION
-    private String expression;
-    private String onTrue;
-    private String onFalse;
-
-    // WAIT
-    private String duration;
-    private String event;
-    private String next;
-
-    // END
-    private String status;
-
-    // AI_DECISION
-    private String promptKey;
-    private Double confidenceThreshold;
-    private String onHighConfidence;
-    private String onLowConfidence;
-
-    public StepType getType() {
-        return type;
+    public StepDefinition(int id, String stepName, String type, Map<String, Object> config, Map<String, Integer> branches) {
+        this.id = id;
+        this.stepName = stepName != null ? stepName : "";
+        this.type = type != null ? type : "";
+        this.config = config != null ? config : Map.of();
+        this.branches = branches != null ? branches : Map.of();
     }
 
-    public void setType(StepType type) {
-        this.type = type;
-    }
-
-    public String getTask() {
-        return task;
-    }
-
-    public void setTask(String task) {
-        this.task = task;
-    }
-
-    public RetryPolicy getRetry() {
-        return retry;
-    }
-
-    public void setRetry(RetryPolicy retry) {
-        this.retry = retry;
-    }
-
-    public String getOnSuccess() {
-        return onSuccess;
-    }
-
-    public void setOnSuccess(String onSuccess) {
-        this.onSuccess = onSuccess;
-    }
-
-    public String getOnFailure() {
-        return onFailure;
-    }
-
-    public void setOnFailure(String onFailure) {
-        this.onFailure = onFailure;
-    }
-
-    public String getExpression() {
-        return expression;
-    }
-
-    public void setExpression(String expression) {
-        this.expression = expression;
-    }
-
-    public String getOnTrue() {
-        return onTrue;
-    }
-
-    public void setOnTrue(String onTrue) {
-        this.onTrue = onTrue;
-    }
-
-    public String getOnFalse() {
-        return onFalse;
-    }
-
-    public void setOnFalse(String onFalse) {
-        this.onFalse = onFalse;
-    }
-
-    public String getDuration() {
-        return duration;
-    }
-
-    public void setDuration(String duration) {
-        this.duration = duration;
-    }
-
-    public String getEvent() {
-        return event;
-    }
-
-    public void setEvent(String event) {
-        this.event = event;
-    }
-
-    public String getNext() {
-        return next;
-    }
-
-    public void setNext(String next) {
-        this.next = next;
-    }
-
-    public String getStatus() {
-        return status;
-    }
-
-    public void setStatus(String status) {
-        this.status = status;
-    }
-
-    public String getPromptKey() { return promptKey; }
-    public void setPromptKey(String promptKey) { this.promptKey = promptKey; }
-    public Double getConfidenceThreshold() { return confidenceThreshold; }
-    public void setConfidenceThreshold(Double confidenceThreshold) { this.confidenceThreshold = confidenceThreshold; }
-    public String getOnHighConfidence() { return onHighConfidence; }
-    public void setOnHighConfidence(String onHighConfidence) { this.onHighConfidence = onHighConfidence; }
-    public String getOnLowConfidence() { return onLowConfidence; }
-    public void setOnLowConfidence(String onLowConfidence) { this.onLowConfidence = onLowConfidence; }
+    public int getId() { return id; }
+    public String getStepName() { return stepName; }
+    public String getType() { return type; }
+    public Map<String, Object> getConfig() { return config; }
+    public Map<String, Integer> getBranches() { return branches; }
 }
-

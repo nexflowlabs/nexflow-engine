@@ -1,0 +1,13 @@
+{
+  "version": "1.0",
+  "name": "hello-workflow",
+  "description": "Basic linear workflow (v1 registry-driven)",
+  "trigger": { "type": "MANUAL" },
+  "steps": [
+    {
+      "id": "say_hello",
+      "name": "helloTask",
+      "config": {}
+    }
+  ]
+}

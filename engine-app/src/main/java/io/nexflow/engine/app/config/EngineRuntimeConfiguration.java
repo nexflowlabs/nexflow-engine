@@ -1,7 +1,8 @@
 package io.nexflow.engine.app.config;
 
 import io.nexflow.engine.app.ai.HttpAiDecisionEvaluator;
-import io.nexflow.engine.core.runtime.WorkflowRuntime;
+import io.nexflow.engine.core.registry.StepRegistry;
+import io.nexflow.engine.core.runtime.RegistryDrivenRuntime;
 import io.nexflow.engine.core.step.AiDecisionEvaluator;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -12,16 +13,14 @@ import org.springframework.web.client.RestClient;
 import java.util.Optional;
 
 /**
- * Wires engine-core runtime and optional AI evaluator.
+ * Wires registry-driven runtime and optional AI evaluator.
  */
 @Configuration
 public class EngineRuntimeConfiguration {
 
     @Bean
-    public WorkflowRuntime workflowRuntime(Optional<AiDecisionEvaluator> aiDecisionEvaluator) {
-        WorkflowRuntime runtime = new WorkflowRuntime();
-        aiDecisionEvaluator.ifPresent(runtime::setAiDecisionEvaluator);
-        return runtime;
+    public RegistryDrivenRuntime registryDrivenRuntime(StepRegistry stepRegistry) {
+        return new RegistryDrivenRuntime(stepRegistry);
     }
 
     @ConditionalOnProperty(name = "nexflow.ai-decision.url")
