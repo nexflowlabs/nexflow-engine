@@ -1,40 +1,67 @@
 package io.nexflow.engine.app.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.nexflow.engine.core.definition.RetryPolicy;
+import io.nexflow.engine.app.loader.WorkflowProvider;
+import io.nexflow.engine.app.loader.WorkflowView;
+import io.nexflow.engine.core.builtin.StepConstants;
+import io.nexflow.engine.core.tenant.TenantContextHolder;
 import io.nexflow.engine.core.definition.StepDefinition;
-import io.nexflow.engine.core.definition.StepType;
 import io.nexflow.engine.core.definition.WorkflowDefinition;
 import io.nexflow.engine.core.runtime.ExecutionContext;
-import io.nexflow.engine.core.runtime.TransitionResult;
-import io.nexflow.engine.core.runtime.WorkflowRuntime;
+import io.nexflow.engine.core.runtime.RegistryDrivenRuntime;
+import io.nexflow.engine.core.runtime.StepOutcome;
 import io.nexflow.engine.persistence.entity.*;
 import io.nexflow.engine.persistence.repository.*;
 import jakarta.transaction.Transactional;
-import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 
 @Service
-@RequiredArgsConstructor
 @Transactional
 public class WorkflowRuntimeService {
 
-    private final WorkflowRuntime runtime;
+    private static final Logger log = LoggerFactory.getLogger(WorkflowRuntimeService.class);
+
+    private final RegistryDrivenRuntime registryDrivenRuntime;
     private final WorkflowExecutionRepository executionRepo;
     private final WorkflowDefinitionRepository definitionRepo;
-    private final TaskExecutionRepository taskRepo;
-    private final WaitExecutionRepository waitRepo;
     private final IdempotencyKeyRepository idemRepo;
+    private final WaitExecutionRepository waitRepo;
+    private final StepExecutionRepository stepExecutionRepo;
+    private final WorkflowProvider workflowProvider;
     private final ObjectMapper objectMapper;
+    private final ExecutorService workflowExecutor;
+
+    public WorkflowRuntimeService(
+            RegistryDrivenRuntime registryDrivenRuntime,
+            WorkflowExecutionRepository executionRepo,
+            WorkflowDefinitionRepository definitionRepo,
+            IdempotencyKeyRepository idemRepo,
+            WaitExecutionRepository waitRepo,
+            StepExecutionRepository stepExecutionRepo,
+            WorkflowProvider workflowProvider,
+            ObjectMapper objectMapper,
+            @Qualifier("workflowExecutor") ExecutorService workflowExecutor) {
+        this.registryDrivenRuntime = registryDrivenRuntime;
+        this.executionRepo = executionRepo;
+        this.definitionRepo = definitionRepo;
+        this.idemRepo = idemRepo;
+        this.waitRepo = waitRepo;
+        this.stepExecutionRepo = stepExecutionRepo;
+        this.workflowProvider = workflowProvider;
+        this.objectMapper = objectMapper;
+        this.workflowExecutor = workflowExecutor;
+    }
 
     @Transactional
-    public UUID startIdempotent(
+    public Long startIdempotent(
             String workflowName,
             String idempotencyKey,
             Map<String, Object> input
@@ -47,15 +74,28 @@ public class WorkflowRuntimeService {
             return existing.get().getReferenceId();
         }
 
-        WorkflowDefinitionEntity def =
-                definitionRepo.findByLatestVersion(workflowName);
+        WorkflowDefinitionEntity def = definitionRepo.findActivePublishedByName(workflowName);
+        if (def == null) {
+            throw new IllegalStateException("No active published workflow found for name: " + workflowName);
+        }
 
-        WorkflowExecutionEntity exec =
-                startExecutionInternal(def, input);
+        WorkflowView loaded = workflowProvider.getLoadedWorkflow(def.getId(), true).orElse(null);
+        if (loaded == null || loaded.getStartStepId() == null) {
+            throw new IllegalStateException("Workflow definition has no steps or start step: " + workflowName);
+        }
+
+        WorkflowExecutionEntity exec = WorkflowExecutionEntity.builder()
+                .workflowDefinitionId(def.getId())
+                .status("RUNNING")
+                .currentStepId(loaded.getStartStepId())
+                .contextJson(objectMapper.writeValueAsString(input != null ? input : Map.of()))
+                .startedAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+        executionRepo.save(exec);
 
         idemRepo.save(
                 IdempotencyKeyEntity.builder()
-                        .id(UUID.randomUUID())
                         .scope("WORKFLOW_START")
                         .key(idempotencyKey)
                         .referenceId(exec.getId())
@@ -63,290 +103,346 @@ public class WorkflowRuntimeService {
                         .build()
         );
 
+        // Run workflow steps on a virtual thread; return immediately with executionId and STARTED
+        final Long executionId = exec.getId();
+        final String tenantId = exec.getTenantId();
+        workflowExecutor.submit(() -> {
+            try {
+                if (tenantId != null && !tenantId.isBlank()) {
+                    TenantContextHolder.set(tenantId);
+                }
+                try {
+                    advanceAfterStart(executionId);
+                } finally {
+                    TenantContextHolder.clear();
+                }
+            } catch (Exception e) {
+                log.error("Workflow advance failed for executionId={}", executionId, e);
+            }
+        });
+
         return exec.getId();
     }
 
-    private WorkflowExecutionEntity startExecutionInternal(
-            WorkflowDefinitionEntity defEntity,
-            Map<String, Object> input
-    ) throws Exception {
-
-        WorkflowDefinition workflow =
-                objectMapper.readValue(defEntity.getDefinitionJson(), WorkflowDefinition.class);
-
-        WorkflowExecutionEntity exec = WorkflowExecutionEntity.builder()
-                .id(UUID.randomUUID())
-                .workflowName(defEntity.getName())
-                .workflowVersion(defEntity.getVersion())
-                .status("RUNNING")
-                .currentStep(workflow.getStart())
-                .contextJson(objectMapper.writeValueAsString(input))
-                .startedAt(Instant.now())
-                .updatedAt(Instant.now())
-                .build();
-
-        executionRepo.save(exec);
-
-        advance(exec, workflow);
-
-        return exec;
+    /**
+     * Runs in a virtual thread: loads execution and workflow, then advances until complete/fail/wait.
+     * Called asynchronously after start; uses its own transaction.
+     */
+    @Transactional
+    public void advanceAfterStart(Long executionId) throws Exception {
+        WorkflowExecutionEntity exec = executionRepo.findById(executionId)
+                .orElseThrow(() -> new IllegalStateException("Execution not found: " + executionId));
+        WorkflowView loaded = workflowProvider.getLoadedWorkflow(exec.getWorkflowDefinitionId(), true).orElse(null);
+        if (loaded == null) {
+            throw new IllegalStateException("Workflow definition or steps not found for execution: " + executionId);
+        }
+        advance(exec, loaded.getDefinition());
     }
 
-
-
-    /* ---------------- START ---------------- */
-
-    public void startExecution(
-            WorkflowDefinitionEntity defEntity,
-            Map<String, Object> input
-    ) throws Exception {
-
-        WorkflowDefinition workflow =
-                objectMapper.readValue(defEntity.getDefinitionJson(), WorkflowDefinition.class);
-
-        WorkflowExecutionEntity exec = WorkflowExecutionEntity.builder()
-                .id(UUID.randomUUID())
-                .workflowName(defEntity.getName())
-                .workflowVersion(defEntity.getVersion())
-                .status("RUNNING")
-                .currentStep(workflow.getStart())
-                .contextJson(objectMapper.writeValueAsString(input))
-                .startedAt(Instant.now())
-                .updatedAt(Instant.now())
-                .build();
-
-        executionRepo.save(exec);
-        advance(exec, workflow);
-    }
-
-    /* ---------------- RESUME ---------------- */
-
-    public void resume(TaskExecutionEntity task) throws Exception {
-
-        WorkflowExecutionEntity exec =
-                executionRepo.findById(task.getExecutionId()).orElseThrow();
-
-        WorkflowDefinitionEntity defEntity =
-                definitionRepo.findByNameAndVersion(
-                        exec.getWorkflowName(),
-                        exec.getWorkflowVersion()
-                );
-
-        WorkflowDefinition workflow =
-                objectMapper.readValue(defEntity.getDefinitionJson(), WorkflowDefinition.class);
-
-        Map<String, Object> ctx =
-                objectMapper.readValue(exec.getContextJson(), Map.class);
-
-        // step name is the KEY, not inside StepDefinition
-        ctx.put(task.getStepName(),
-                objectMapper.readValue(task.getOutputJson(), Map.class));
-
-        exec.setContextJson(objectMapper.writeValueAsString(ctx));
-        exec.setCurrentStep(
-                workflow.getSteps()
-                        .get(task.getStepName())
-                        .getOnSuccess()
-        );
-        exec.setUpdatedAt(Instant.now());
-        executionRepo.save(exec);
-
-        advance(exec, workflow);
-    }
-
-    /* ---------------- CORE ADVANCE ---------------- */
-
-    private void advance(
-            WorkflowExecutionEntity exec,
-            WorkflowDefinition workflow
-    ) throws Exception {
-
-        ExecutionContext context = new ExecutionContext(
-                exec.getId().toString(),
-                objectMapper.readValue(exec.getContextJson(), Map.class)
-        );
-
-        String stepName = exec.getCurrentStep();
-        StepDefinition step = workflow.getSteps().get(stepName);
-
-        TransitionResult result =
-                runtime.runStep(workflow, stepName, context);
-
-        switch (result.getType()) {
-
-            case CONTINUE -> {
-                exec.setCurrentStep(result.getNextStep());
-                persist(exec, context);
-                advance(exec, workflow);
+    /**
+     * Advances the execution using the in-memory workflow graph. Runs steps in a loop until
+     * the workflow completes, fails, or has no current step (no recursion).
+     */
+    private void advance(WorkflowExecutionEntity exec, WorkflowDefinition workflow) throws Exception {
+        while (true) {
+            if (exec.getCurrentStepId() == null) {
+                exec.setStatus("COMPLETED");
+                exec.setUpdatedAt(Instant.now());
+                executionRepo.save(exec);
+                return;
             }
+            boolean shouldContinue = executeNextStep(exec, workflow);
+            if (!shouldContinue) {
+                return;
+            }
+        }
+    }
 
-            case WAIT -> {
-                if (step.getType() == StepType.TASK) {
-                    createTask(exec, step, context);
-                } else if (step.getType() == StepType.WAIT) {
-                    createWait(exec, step);
+    /**
+     * Executes the current step once, updates execution state and persists. Returns true
+     * if the workflow should advance to the next step (CONTINUE), false if terminal (COMPLETE/FAIL).
+     */
+    private boolean executeNextStep(WorkflowExecutionEntity exec, WorkflowDefinition workflow) throws Exception {
+        Integer currentStepId = exec.getCurrentStepId();
+        StepDefinition stepDef = workflow.getStepById(currentStepId);
+        RetryConfig retry = parseRetryConfig(stepDef != null ? stepDef.getConfig() : null);
+
+        int attempt = (int) stepExecutionRepo.countByExecutionIdAndStepId(exec.getId(), currentStepId) + 1;
+        if (attempt > retry.maxAttempts) {
+            exec.setStatus("FAILED");
+            exec.setCurrentStepId(null);
+            Map<String, Object> data = objectMapper.readValue(exec.getContextJson(), Map.class);
+            data.put("errorMessage", "Max retries exceeded for step " + currentStepId + " (maxAttempts=" + retry.maxAttempts + ")");
+            exec.setContextJson(objectMapper.writeValueAsString(data));
+            exec.setUpdatedAt(Instant.now());
+            executionRepo.save(exec);
+            return false;
+        }
+
+        Map<String, Object> data = objectMapper.readValue(exec.getContextJson(), Map.class);
+        ExecutionContext context = new ExecutionContext(exec.getId().toString(), data);
+        String workflowName = workflow.getName() != null ? workflow.getName() : "";
+
+        // 1. Record step start in step_execution
+        Instant stepStartedAt = Instant.now();
+        StepExecutionEntity stepExec = new StepExecutionEntity();
+        stepExec.setExecutionId(exec.getId());
+        stepExec.setStepId(currentStepId);
+        stepExec.setStatus("STARTED");
+        stepExec.setAttempt(attempt);
+        stepExec.setInputJson(exec.getContextJson());
+        stepExec.setStartedAt(stepStartedAt);
+        stepExecutionRepo.save(stepExec);
+
+        StepOutcome outcome = registryDrivenRuntime.runStep(
+                workflow,
+                currentStepId,
+                context,
+                workflowName,
+                null,
+                attempt - 1
+        );
+
+        // 2. Record step end: status, endedAt, output
+        Instant stepEndedAt = Instant.now();
+        stepExec.setEndedAt(stepEndedAt);
+        stepExec.setStatus(outcomeStatusToStepStatus(outcome.getType()));
+        stepExec.setOutputJson(outcome.getContextUpdates() != null && !outcome.getContextUpdates().isEmpty()
+                ? objectMapper.writeValueAsString(outcome.getContextUpdates())
+                : null);
+        stepExecutionRepo.save(stepExec);
+
+        // Merge step outputs into execution context for next step, but exclude "outcome" so it does not travel across steps (each step's outcome is only in its own output_json).
+        if (outcome.getContextUpdates() != null && !outcome.getContextUpdates().isEmpty()) {
+            for (Map.Entry<String, Object> e : outcome.getContextUpdates().entrySet()) {
+                if (!StepConstants.OUTCOME_KEY.equals(e.getKey())) {
+                    data.put(e.getKey(), e.getValue());
                 }
             }
+            exec.setContextJson(objectMapper.writeValueAsString(data));
+        }
+        exec.setUpdatedAt(Instant.now());
 
+        switch (outcome.getType()) {
+            case CONTINUE -> {
+                Integer nextId = outcome.getNextStepId();
+                if (nextId != null && nextId.equals(currentStepId)) {
+                    // Step returned RETRY: same step again
+                    if (attempt >= retry.maxAttempts) {
+                        exec.setStatus("FAILED");
+                        exec.setCurrentStepId(null);
+                        data.put("errorMessage", "Max retries exceeded for step " + currentStepId + " (maxAttempts=" + retry.maxAttempts + ")");
+                        exec.setContextJson(objectMapper.writeValueAsString(data));
+                        exec.setUpdatedAt(Instant.now());
+                        executionRepo.save(exec);
+                        return false;
+                    }
+                    if (retry.backoffSeconds > 0) {
+                        try {
+                            Thread.sleep(retry.backoffSeconds * 1000L);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new RuntimeException("Retry backoff interrupted", e);
+                        }
+                    }
+                    exec.setCurrentStepId(currentStepId);
+                    executionRepo.save(exec);
+                    return true;
+                }
+                exec.setCurrentStepId(nextId);
+                executionRepo.save(exec);
+                return true;
+            }
             case COMPLETE -> {
                 exec.setStatus("COMPLETED");
-                exec.setCurrentStep(null);
-                persist(exec, context);
+                exec.setCurrentStepId(null);
+                executionRepo.save(exec);
+                return false;
+            }
+            case FAIL -> {
+                exec.setStatus("FAILED");
+                exec.setCurrentStepId(null);
+                if (outcome.getErrorMessage() != null && !outcome.getErrorMessage().isBlank()) {
+                    data.put("errorMessage", outcome.getErrorMessage());
+                    exec.setContextJson(objectMapper.writeValueAsString(data));
+                }
+                executionRepo.save(exec);
+                return false;
+            }
+            case WAIT -> {
+                exec.setStatus("WAITING");
+                executionRepo.save(exec);
+                WaitExecutionEntity waitEntity = new WaitExecutionEntity();
+                waitEntity.setExecutionId(exec.getId());
+                waitEntity.setStepId(currentStepId);
+                waitEntity.setWaitType("EVENT");
+                waitEntity.setEventName("webhook");
+                waitEntity.setWaitToken(outcome.getWaitToken());
+                waitEntity.setNextStepIdWhenResumed(null);
+                waitEntity.setStatus("WAITING");
+                waitEntity.setCreatedAt(Instant.now());
+                waitEntity.setUpdatedAt(Instant.now());
+                waitRepo.save(waitEntity);
+                return false;
             }
         }
+        return false;
     }
 
-    /* ---------------- TASK CREATION ---------------- */
-
-    private void createTask(
-            WorkflowExecutionEntity exec,
-            StepDefinition step,
-            ExecutionContext context
-    ) throws Exception {
-
-        TaskExecutionEntity task = TaskExecutionEntity.builder()
-                .id(UUID.randomUUID())
-                .executionId(exec.getId())
-                .stepName(exec.getCurrentStep())
-                .taskName(step.getTask())
-                .status("PENDING")
-                .attempt(1)
-                .inputJson(objectMapper.writeValueAsString(context.getData()))
-                .createdAt(Instant.now())
-                .updatedAt(Instant.now())
-                .build();
-
-        taskRepo.save(task);
+    private static String outcomeStatusToStepStatus(StepOutcome.Type type) {
+        return switch (type) {
+            case CONTINUE, COMPLETE -> "COMPLETED";
+            case FAIL -> "FAILED";
+            case WAIT -> "WAITING";
+        };
     }
 
-    /* ---------------- PERSIST ---------------- */
-
-    private void persist(
-            WorkflowExecutionEntity exec,
-            ExecutionContext context
-    ) throws Exception {
-
-        exec.setContextJson(objectMapper.writeValueAsString(context.getData()));
-        exec.setUpdatedAt(Instant.now());
-        executionRepo.save(exec);
-    }
-
-    @Transactional
-    public void handleTaskFailure(TaskExecutionEntity task) throws Exception {
-
-        WorkflowExecutionEntity exec =
-                executionRepo.findById(task.getExecutionId()).orElseThrow();
-
-        WorkflowDefinitionEntity defEntity =
-                definitionRepo.findByNameAndVersion(
-                        exec.getWorkflowName(),
-                        exec.getWorkflowVersion()
-                );
-
-        WorkflowDefinition workflow =
-                objectMapper.readValue(defEntity.getDefinitionJson(), WorkflowDefinition.class);
-
-        StepDefinition step =
-                workflow.getSteps().get(task.getStepName());
-
-        RetryPolicy retry = step.getRetry();
-
-        if (retry != null && task.getAttempt() < retry.getMaxAttempts()) {
-            retryTask(task, retry);
-            return;
+    private static Integer parseStepId(String nextStepId) {
+        if (nextStepId == null || nextStepId.isBlank()) return null;
+        try {
+            return Integer.parseInt(nextStepId);
+        } catch (NumberFormatException e) {
+            return null;
         }
-
-        // Retries exhausted → step failure
-        handleStepFailure(exec, workflow, step, task);
     }
 
-    private void retryTask(
-            TaskExecutionEntity task,
-            RetryPolicy retry
-    ) {
+    /** Retry settings for a step. Read from step config "retry": { "maxAttempts": N, "backoffSeconds": S }. */
+    private static final class RetryConfig {
+        static final int DEFAULT_MAX_ATTEMPTS = 1;
+        static final int DEFAULT_BACKOFF_SECONDS = 0;
+        final int maxAttempts;
+        final int backoffSeconds;
 
-        task.setAttempt(task.getAttempt() + 1);
-        task.setStatus("PENDING");
-
-        // naive backoff (v1)
-        task.setUpdatedAt(
-                Instant.now().plusSeconds(retry.getBackoffSeconds())
-        );
-
-        taskRepo.save(task);
+        RetryConfig(int maxAttempts, int backoffSeconds) {
+            this.maxAttempts = Math.max(1, maxAttempts);
+            this.backoffSeconds = Math.max(0, backoffSeconds);
+        }
     }
 
-    private void handleStepFailure(
-            WorkflowExecutionEntity exec,
-            WorkflowDefinition workflow,
-            StepDefinition step,
-            TaskExecutionEntity task
-    ) throws Exception {
+    private static RetryConfig parseRetryConfig(Map<String, Object> stepConfig) {
+        if (stepConfig == null) return new RetryConfig(RetryConfig.DEFAULT_MAX_ATTEMPTS, RetryConfig.DEFAULT_BACKOFF_SECONDS);
+        Object retryObj = stepConfig.get("retry");
+        if (!(retryObj instanceof Map<?, ?> retryMap)) return new RetryConfig(RetryConfig.DEFAULT_MAX_ATTEMPTS, RetryConfig.DEFAULT_BACKOFF_SECONDS);
+        int max = RetryConfig.DEFAULT_MAX_ATTEMPTS;
+        int backoff = RetryConfig.DEFAULT_BACKOFF_SECONDS;
+        Object m = retryMap.get("maxAttempts");
+        if (m instanceof Number n) max = n.intValue();
+        Object b = retryMap.get("backoffSeconds");
+        if (b instanceof Number n) backoff = n.intValue();
+        return new RetryConfig(max, backoff);
+    }
 
-        if (step.getOnFailure() == null) {
-            // Terminal failure
+    /** Resume a workflow execution after a wait (TIME or EVENT) completed. Loads graph by workflow_definition_id. */
+    public void resumeWait(WaitExecutionEntity wait) throws Exception {
+        resumeWaitWithContext(wait, null);
+    }
+
+    /**
+     * Resumes a workflow by wait token (e.g. from webhook/callback). Looks up the wait in the service,
+     * submits resume to a virtual thread, and returns whether a matching wait was found.
+     * No repository logic in controller; call this from the workflow controller only.
+     *
+     * @param waitToken   token from StepResult.waitForEvent(waitToken, ...)
+     * @param contextMerge optional payload to merge into execution context (e.g. outcome for branching)
+     * @return true if a WAITING wait was found and resume was submitted, false otherwise (404)
+     */
+    public boolean resumeByToken(String waitToken, Map<String, Object> contextMerge) {
+        if (waitToken == null || waitToken.isBlank()) {
+            return false;
+        }
+        return waitRepo.findByWaitTokenAndStatus(waitToken, "WAITING")
+                .map(wait -> {
+                    String tenantId = wait.getTenantId();
+                    submitResumeAsync(wait.getId(), contextMerge != null ? contextMerge : Map.of(), tenantId);
+                    return true;
+                })
+                .orElse(false);
+    }
+
+    /**
+     * Submits resume to a virtual thread and returns immediately.
+     * Used internally after wait is resolved by token or id. Sets tenant context from wait before running.
+     */
+    public void submitResumeAsync(Long waitId, Map<String, Object> contextMerge, String tenantId) {
+        workflowExecutor.submit(() -> {
+            try {
+                if (tenantId != null && !tenantId.isBlank()) {
+                    TenantContextHolder.set(tenantId);
+                }
+                try {
+                    runResume(waitId, contextMerge != null ? contextMerge : Map.of());
+                } finally {
+                    TenantContextHolder.clear();
+                }
+            } catch (Exception e) {
+                log.error("Webhook resume failed for waitId={}", waitId, e);
+            }
+        });
+    }
+
+    /**
+     * Runs in a virtual thread: loads wait by id and resumes the workflow.
+     * Uses its own transaction.
+     */
+    @Transactional
+    public void runResume(Long waitId, Map<String, Object> contextMerge) throws Exception {
+        WaitExecutionEntity wait = waitRepo.findById(waitId)
+                .orElseThrow(() -> new IllegalStateException("Wait not found: " + waitId));
+        resumeWaitWithContext(wait, contextMerge);
+    }
+
+    /** Resume and optionally merge webhook payload into execution context before advancing. */
+    public void resumeWaitWithContext(WaitExecutionEntity wait, Map<String, Object> contextMerge) throws Exception {
+        WorkflowExecutionEntity exec = executionRepo.findById(wait.getExecutionId()).orElseThrow();
+        WorkflowDefinition workflow = workflowProvider.getLoadedWorkflow(exec.getWorkflowDefinitionId(), false)
+                .map(WorkflowView::getDefinition)
+                .orElseThrow(() -> new IllegalStateException("Workflow definition or steps not found for execution: " + exec.getId()));
+        // 1. Keep input data in contextJson (merge webhook payload into context)
+        if (contextMerge != null && !contextMerge.isEmpty()) {
+            Map<String, Object> data = objectMapper.readValue(exec.getContextJson(), Map.class);
+            data.putAll(contextMerge);
+            exec.setContextJson(objectMapper.writeValueAsString(data));
+            exec.setUpdatedAt(Instant.now());
+        }
+        // 2. Mark wait as completed
+        wait.setStatus("COMPLETED");
+        wait.setUpdatedAt(Instant.now());
+        waitRepo.save(wait);
+        // 3. Resolve next step from outcome in payload (required for dynamic branching)
+        String branchName = null;
+        if (contextMerge != null && contextMerge.containsKey(StepConstants.OUTCOME_KEY)) {
+            Object o = contextMerge.get(StepConstants.OUTCOME_KEY);
+            if (o != null) branchName = o.toString().trim();
+        }
+        if (branchName == null || branchName.isEmpty()) {
             exec.setStatus("FAILED");
-            exec.setCurrentStep(null);
+            exec.setCurrentStepId(null);
+            Map<String, Object> data = objectMapper.readValue(exec.getContextJson(), Map.class);
+            data.put("errorMessage", "outcome is required in webhook payload (response must include '" + StepConstants.OUTCOME_KEY + "')");
+            exec.setContextJson(objectMapper.writeValueAsString(data));
             exec.setUpdatedAt(Instant.now());
             executionRepo.save(exec);
             return;
         }
-
-        // Move workflow to failure step
-        exec.setCurrentStep(step.getOnFailure());
+        Integer nextStepId;
+        try {
+            nextStepId = RegistryDrivenRuntime.resolveNextStepId(workflow, wait.getStepId(), branchName);
+        } catch (IllegalArgumentException e) {
+            exec.setStatus("FAILED");
+            exec.setCurrentStepId(null);
+            Map<String, Object> data = objectMapper.readValue(exec.getContextJson(), Map.class);
+            data.put("errorMessage", e.getMessage());
+            exec.setContextJson(objectMapper.writeValueAsString(data));
+            exec.setUpdatedAt(Instant.now());
+            executionRepo.save(exec);
+            return;
+        }
+        exec.setCurrentStepId(nextStepId);
+        exec.setStatus(nextStepId != null ? "RUNNING" : "COMPLETED");
         exec.setUpdatedAt(Instant.now());
         executionRepo.save(exec);
-
-        advance(exec, workflow);
+        if (nextStepId != null) {
+            advance(exec, workflow);
+        }
     }
-
-    private void createWait(
-            WorkflowExecutionEntity exec,
-            StepDefinition step
-    ) {
-
-        WaitExecutionEntity wait = WaitExecutionEntity.builder()
-                .id(UUID.randomUUID())
-                .executionId(exec.getId())
-                .stepName(exec.getCurrentStep())
-                .waitType(step.getDuration() != null ? "TIME" : "EVENT")
-                .waitUntil(
-                        step.getDuration() != null
-                                ? Instant.now().plus(Duration.parse(step.getDuration()))
-                                : null
-                )
-                .eventName(step.getEvent())
-                .status("WAITING")
-                .createdAt(Instant.now())
-                .updatedAt(Instant.now())
-                .build();
-
-        waitRepo.save(wait);
-    }
-
-    @Transactional
-    public void resumeWait(WaitExecutionEntity wait) throws Exception {
-
-        WorkflowExecutionEntity exec =
-                executionRepo.findById(wait.getExecutionId()).orElseThrow();
-
-        WorkflowDefinitionEntity defEntity =
-                definitionRepo.findByNameAndVersion(
-                        exec.getWorkflowName(),
-                        exec.getWorkflowVersion()
-                );
-
-        WorkflowDefinition workflow =
-                objectMapper.readValue(defEntity.getDefinitionJson(), WorkflowDefinition.class);
-
-        StepDefinition step =
-                workflow.getSteps().get(wait.getStepName());
-
-        exec.setCurrentStep(step.getNext());
-        exec.setUpdatedAt(Instant.now());
-        executionRepo.save(exec);
-
-        advance(exec, workflow);
-    }
-
 }

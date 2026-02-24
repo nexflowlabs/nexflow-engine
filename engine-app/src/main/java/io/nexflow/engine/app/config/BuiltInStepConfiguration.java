@@ -1,29 +1,74 @@
 package io.nexflow.engine.app.config;
 
-import io.nexflow.engine.core.definition.StepType;
+import com.nexflow.sdk.core.WorkflowStep;
+import io.nexflow.engine.core.builtin.*;
+import io.nexflow.engine.core.registry.StepRegistry;
+import io.nexflow.engine.core.script.ScriptExecutionClient;
+import io.nexflow.engine.core.step.AiDecisionEvaluator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.Set;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
- * Declares which step types are built-in (handled inside engine-core).
- * Plugin-loaded steps are separate and registered via PluginLoader.
+ * Registers built-in steps as WorkflowStep beans and builds StepRegistry from all WorkflowStep beans.
+ * No type enum; all steps are registry-driven by name.
  */
 @Configuration
 public class BuiltInStepConfiguration {
 
-    /** Built-in step types: implemented in engine-core, no plugin required. */
-    public static final Set<StepType> BUILT_IN_STEP_TYPES = Set.of(
-            StepType.TASK,
-            StepType.DECISION,
-            StepType.WAIT,
-            StepType.END,
-            StepType.AI_DECISION
-    );
+    @Bean
+    public WaitStep waitStep() {
+        return new WaitStep();
+    }
 
     @Bean
-    public Set<StepType> builtInStepTypes() {
-        return BUILT_IN_STEP_TYPES;
+    public ConditionStep conditionStep() {
+        return new ConditionStep();
+    }
+
+    @Bean
+    public TransformStep transformStep() {
+        return new TransformStep();
+    }
+
+    @Bean
+    public HttpCallStep httpCallStep() {
+        return new HttpCallStep();
+    }
+
+    @Bean
+    public EmitEventStep emitEventStep() {
+        return new EmitEventStep();
+    }
+
+    @Bean
+    public AiDecisionStepBuiltin aiDecisionStep(Optional<AiDecisionEvaluator> evaluator) {
+        return new AiDecisionStepBuiltin(evaluator.orElse(null));
+    }
+
+    @Bean
+    public ExpressionStep expressionStep() {
+        return new ExpressionStep();
+    }
+
+    @Bean
+    public ScriptStep scriptStep(Optional<ScriptExecutionClient> scriptExecutionClient) {
+        return new ScriptStep(scriptExecutionClient.orElse(null));
+    }
+
+    @Bean
+    public StepRegistry stepRegistry(List<WorkflowStep> steps) {
+        Map<String, WorkflowStep> stepByType = new HashMap<>();
+        for (WorkflowStep step : steps) {
+            String type = step.getType();
+            if (type != null && !type.isBlank()) {
+                stepByType.put(type, step);
+            }
+        }
+        return new StepRegistry(stepByType);
     }
 }

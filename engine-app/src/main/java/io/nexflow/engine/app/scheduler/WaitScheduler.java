@@ -4,6 +4,7 @@ import io.nexflow.engine.app.runtime.WorkflowRuntimeService;
 import io.nexflow.engine.persistence.entity.WaitExecutionEntity;
 import io.nexflow.engine.persistence.repository.WaitExecutionRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -12,6 +13,7 @@ import java.util.List;
 
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "nexflow.wait-scheduler.enabled", havingValue = "true")
 public class WaitScheduler {
 
     private final WaitExecutionRepository waitRepo;

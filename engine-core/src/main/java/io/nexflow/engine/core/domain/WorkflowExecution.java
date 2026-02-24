@@ -1,7 +1,6 @@
 package io.nexflow.engine.core.domain;
 
 import java.time.Instant;
-import java.util.UUID;
 
 /**
  * Domain model for a workflow execution.
@@ -9,25 +8,22 @@ import java.util.UUID;
  */
 public class WorkflowExecution {
 
-    private UUID id;
-    private String workflowName;
-    private int workflowVersion;
+    private Long id;
+    private Long workflowDefinitionId;
     private String status;
-    private String currentStep;
+    private Integer currentStepId;
     private String contextJson;
     private Instant startedAt;
     private Instant updatedAt;
 
-    public UUID getId() { return id; }
-    public void setId(UUID id) { this.id = id; }
-    public String getWorkflowName() { return workflowName; }
-    public void setWorkflowName(String workflowName) { this.workflowName = workflowName; }
-    public int getWorkflowVersion() { return workflowVersion; }
-    public void setWorkflowVersion(int workflowVersion) { this.workflowVersion = workflowVersion; }
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public Long getWorkflowDefinitionId() { return workflowDefinitionId; }
+    public void setWorkflowDefinitionId(Long workflowDefinitionId) { this.workflowDefinitionId = workflowDefinitionId; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
-    public String getCurrentStep() { return currentStep; }
-    public void setCurrentStep(String currentStep) { this.currentStep = currentStep; }
+    public Integer getCurrentStepId() { return currentStepId; }
+    public void setCurrentStepId(Integer currentStepId) { this.currentStepId = currentStepId; }
     public String getContextJson() { return contextJson; }
     public void setContextJson(String contextJson) { this.contextJson = contextJson; }
     public Instant getStartedAt() { return startedAt; }

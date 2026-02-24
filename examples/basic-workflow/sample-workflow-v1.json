@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "name": "hello-workflow",
+  "description": "Basic linear workflow (v1 registry-driven). Reference shape; engine loads from DB (workflow_definition + workflow_step_definition with config_json, branches_json).",
+  "steps": [
+    {
+      "step_id": 1,
+      "step_name": "say_hello",
+      "step_type": "transform",
+      "config": { "newField": "greeting", "value": "Hello" },
+      "branches": { "success": 2 }
+    },
+    {
+      "step_id": 2,
+      "step_name": "done",
+      "step_type": "transform",
+      "config": { "newField": "status", "value": "COMPLETED" },
+      "branches": { "success": null }
+    }
+  ]
+}

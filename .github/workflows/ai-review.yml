@@ -1,0 +1,154 @@
+# AI Code Review – structured severity, summary, issues; fails on CRITICAL.
+# Trigger: PR opened, updated, or reopened. Needs OPENAI_API_KEY (or ANTHROPIC_API_KEY) in secrets.
+
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        run: |
+          git fetch origin "${{ github.event.pull_request.base.ref }}"
+          git diff "origin/${{ github.event.pull_request.base.ref }}...HEAD" -- . > pr_diff.txt
+          MAX=90000
+          if [ $(wc -c < pr_diff.txt) -gt $MAX ]; then
+            echo "... [diff truncated for length] ..." > pr_diff_trimmed.txt
+            tail -c $MAX pr_diff.txt >> pr_diff_trimmed.txt
+            mv pr_diff_trimmed.txt pr_diff.txt
+          fi
+
+      - name: Send diff to AI
+        id: ai
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -e
+          {
+            echo "Review this PR diff and respond with a single valid JSON object only (no markdown, no code fence)."
+            echo "Keys: severity (one of: LOW, MEDIUM, HIGH, CRITICAL), summary (string), issues (array of strings)."
+            echo ""
+            echo "Check for:"
+            echo "- Clean Architecture violations (wrong layering, boundary breaches)"
+            echo "- Thread safety issues (shared mutable state, races)"
+            echo "- Blocking calls (blocking I/O on critical path)"
+            echo "- Security risks (injection, exposure, missing validation)"
+            echo "- Hardcoded secrets"
+            echo ""
+            echo "PR Diff:"
+            echo '---'
+            cat pr_diff.txt
+          } > prompt.txt
+
+          if [ -n "$OPENAI_API_KEY" ]; then
+            PAYLOAD=$(jq -n --rawfile content prompt.txt '{model: "gpt-4o-mini", messages: [{role: "system", content: "You are a senior Java architect. Reply with exactly one JSON object: { \"severity\": \"LOW\"|\"MEDIUM\"|\"HIGH\"|\"CRITICAL\", \"summary\": \"...\", \"issues\": [\"...\", \"...\"] }. No other text or markdown."}, {role: "user", content: $content}], max_tokens: 2000}')
+            BODY=$(curl -s -X POST "https://api.openai.com/v1/chat/completions" \
+              -H "Authorization: Bearer $OPENAI_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD")
+            RAW=$(echo "$BODY" | jq -r '.choices[0].message.content // empty')
+          elif [ -n "$ANTHROPIC_API_KEY" ]; then
+            PAYLOAD=$(jq -n --rawfile content prompt.txt '{model: "claude-3-5-haiku-20241022", max_tokens: 2000, messages: [{role: "user", content: ("Reply with exactly one JSON object: { severity: LOW|MEDIUM|HIGH|CRITICAL, summary: string, issues: string[] }. No other text.\n\n" + $content)}]}')
+            BODY=$(curl -s -X POST "https://api.anthropic.com/v1/messages" \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD")
+            RAW=$(echo "$BODY" | jq -r '.content[0].text // empty')
+          else
+            RAW='{"severity":"LOW","summary":"No API key configured. Add OPENAI_API_KEY or ANTHROPIC_API_KEY.","issues":[]}'
+          fi
+
+          # Strip markdown code fence if present
+          JSON=$(echo "$RAW" | sed '1s/^```json\?//; $s/```$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          [ -z "$JSON" ] && JSON="$RAW"
+          echo "$JSON" > ai_response.json
+
+          SEVERITY=$(echo "$JSON" | jq -r '.severity // "UNKNOWN"')
+          SUMMARY=$(echo "$JSON" | jq -r '.summary // "No summary."')
+          echo "SEVERITY=$SEVERITY" >> $GITHUB_ENV
+          echo "severity=$SEVERITY" >> $GITHUB_OUTPUT
+          echo "$SUMMARY" > summary.txt
+          echo "$JSON" | jq -r '.issues[]?' > issues.txt || true
+
+      - name: Build review comment
+        run: |
+          SEVERITY="${{ env.SEVERITY }}"
+          SUMMARY=$(cat summary.txt)
+          BADGE="🟢 PASS"
+          [ "$SEVERITY" = "CRITICAL" ] && BADGE="🔴 CRITICAL"
+          [ "$SEVERITY" = "HIGH" ]    && BADGE="🟠 HIGH"
+          [ "$SEVERITY" = "MEDIUM" ]  && BADGE="🟡 MEDIUM"
+          [ "$SEVERITY" = "LOW" ]     && BADGE="🟢 LOW"
+          [ "$SEVERITY" = "UNKNOWN" ] && BADGE="⚪ UNKNOWN"
+
+          {
+            echo "## 🤖 AI Code Review"
+            echo ""
+            echo "### $BADGE — \`$SEVERITY\`"
+            echo ""
+            echo "**Summary:** $SUMMARY"
+            echo ""
+            if [ -s issues.txt ]; then
+              echo "**Issues:**"
+              echo ""
+              while IFS= read -r line; do
+                [ -n "$line" ] && echo "- $line"
+              done < issues.txt
+            fi
+            echo ""
+            echo "---"
+            echo "*Review generated from PR diff. Fail condition: CRITICAL severity.*"
+          } > review_comment.md
+
+      - name: Post review comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('review_comment.md', 'utf8');
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            const botComment = comments.find(c => c.user.type === 'Bot' && c.body && c.body.startsWith('## 🤖 AI Code Review'));
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+        continue-on-error: true
+
+      - name: Fail if Critical
+        run: |
+          SEVERITY="${{ env.SEVERITY }}"
+          if [ "$SEVERITY" = "CRITICAL" ]; then
+            echo "::error::Critical severity from AI code review. Address issues before merging."
+            exit 1
+          fi
+          echo "AI review severity: $SEVERITY (no critical issues)."
