@@ -69,6 +69,11 @@ springdoc:
 # Nexflow Engine
 # ---------------------------------------------------------------------------
 nexflow:
+  # Tenant: single (self-hosted, use default-id when X-Tenant-Id absent) or multi (SaaS).
+  tenant:
+    mode: single
+    default-id: default
+
   # When true, scheduled job runs to complete TIME-type waits (wait_until elapsed). Default: false.
   wait-scheduler:
     enabled: false

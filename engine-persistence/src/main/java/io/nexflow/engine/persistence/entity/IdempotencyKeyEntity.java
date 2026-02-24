@@ -9,14 +9,14 @@ import java.time.Instant;
 @Table(
         name = "idempotency_key",
         uniqueConstraints = {
-                @UniqueConstraint(columnNames = {"scope", "key_value"})
+                @UniqueConstraint(columnNames = {"tenant_id", "scope", "key_value"})
         }
 )
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class IdempotencyKeyEntity {
+public class IdempotencyKeyEntity extends TenantAwareEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

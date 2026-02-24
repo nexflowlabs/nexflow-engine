@@ -18,7 +18,7 @@ import org.hibernate.type.SqlTypes;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class WorkflowStepDefinitionEntity {
+public class WorkflowStepDefinitionEntity extends TenantAwareEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -26,6 +26,12 @@ Base path: `/api/v1`. All workflow operations are under **WorkflowController** (
 
 - Resumes all workflows waiting for the given event name (EVENT wait type). Use when steps wait on named events rather than a webhook token.
 
+## Tenant
+
+- **Header:** `X-Tenant-Id` (optional). When present, all data for the request is scoped to that tenant.
+- **Config:** `nexflow.tenant.mode` = `single` (default) or `multi`; `nexflow.tenant.default-id` = tenant when header is absent (default: `default`).
+- **Isolation:** Shared tables with `tenant_id`; Hibernate filter ensures queries only see the current tenant. Async workers set tenant from the entity before processing and clear after.
+
 ## OpenAPI / Swagger
 
 - **Swagger UI:** `http://localhost:8080/swagger-ui.html`

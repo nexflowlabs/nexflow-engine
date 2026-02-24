@@ -10,6 +10,11 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+/**
+ * Workflow start and resume. Tenant is resolved from X-Tenant-Id header (or default in single-tenant mode).
+ * When adding GET endpoints that return workflow or execution by id, call
+ * {@link io.nexflow.engine.tenant.TenantVerification#ensureTenantMatch} before returning.
+ */
 @RestController
 @RequestMapping("/api/v1/workflows")
 @RequiredArgsConstructor

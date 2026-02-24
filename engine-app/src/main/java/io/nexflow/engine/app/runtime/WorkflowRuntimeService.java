@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.nexflow.engine.app.loader.WorkflowProvider;
 import io.nexflow.engine.app.loader.WorkflowView;
 import io.nexflow.engine.core.builtin.StepConstants;
+import io.nexflow.engine.core.tenant.TenantContextHolder;
 import io.nexflow.engine.core.definition.StepDefinition;
 import io.nexflow.engine.core.definition.WorkflowDefinition;
 import io.nexflow.engine.core.runtime.ExecutionContext;
@@ -104,9 +105,17 @@ public class WorkflowRuntimeService {
 
         // Run workflow steps on a virtual thread; return immediately with executionId and STARTED
         final Long executionId = exec.getId();
+        final String tenantId = exec.getTenantId();
         workflowExecutor.submit(() -> {
             try {
-                advanceAfterStart(executionId);
+                if (tenantId != null && !tenantId.isBlank()) {
+                    TenantContextHolder.set(tenantId);
+                }
+                try {
+                    advanceAfterStart(executionId);
+                } finally {
+                    TenantContextHolder.clear();
+                }
             } catch (Exception e) {
                 log.error("Workflow advance failed for executionId={}", executionId, e);
             }
@@ -343,7 +352,8 @@ public class WorkflowRuntimeService {
         }
         return waitRepo.findByWaitTokenAndStatus(waitToken, "WAITING")
                 .map(wait -> {
-                    submitResumeAsync(wait.getId(), contextMerge != null ? contextMerge : Map.of());
+                    String tenantId = wait.getTenantId();
+                    submitResumeAsync(wait.getId(), contextMerge != null ? contextMerge : Map.of(), tenantId);
                     return true;
                 })
                 .orElse(false);
@@ -351,12 +361,19 @@ public class WorkflowRuntimeService {
 
     /**
      * Submits resume to a virtual thread and returns immediately.
-     * Used internally after wait is resolved by token or id.
+     * Used internally after wait is resolved by token or id. Sets tenant context from wait before running.
      */
-    public void submitResumeAsync(Long waitId, Map<String, Object> contextMerge) {
+    public void submitResumeAsync(Long waitId, Map<String, Object> contextMerge, String tenantId) {
         workflowExecutor.submit(() -> {
             try {
-                runResume(waitId, contextMerge != null ? contextMerge : Map.of());
+                if (tenantId != null && !tenantId.isBlank()) {
+                    TenantContextHolder.set(tenantId);
+                }
+                try {
+                    runResume(waitId, contextMerge != null ? contextMerge : Map.of());
+                } finally {
+                    TenantContextHolder.clear();
+                }
             } catch (Exception e) {
                 log.error("Webhook resume failed for waitId={}", waitId, e);
             }

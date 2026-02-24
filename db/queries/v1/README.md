@@ -4,9 +4,9 @@ Schema and reference SQL for Nexflow Engine persistence (PostgreSQL).
 
 | File | Purpose |
 |------|---------|
-| `schema.sql` | DDL: tables and indexes matching JPA entities in `engine-persistence`. Branches live in `workflow_step_definition.branches_json` (no separate branch table). |
+| `schema.sql` | DDL: tables and indexes matching JPA entities in `engine-persistence`. All business tables include `tenant_id` for tenant isolation (shared schema). Branches live in `workflow_step_definition.branches_json`. |
 | `queries.sql` | Reference SELECTs aligned with repository method names (documentation / ad‑hoc use). |
-| `sample_workflow_test_app.sql` | Inserts a sample workflow with `branches_json` per step: transform, expression, condition, script, httpCall (test app at localhost:8081). |
+| `sample_workflow_test_app.sql` | Sample data: one workflow (test-app-workflow) with `tenant_id = 'default'` and step definitions (transform, expression, condition, script, httpCall; test app at localhost:8081). Run after schema.sql. |
 
 ## Sample workflow (test-app-workflow)
 

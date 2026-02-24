@@ -16,12 +16,12 @@ import java.time.Instant;
 @Entity
 @Table(
     name = "workflow_definition",
-    uniqueConstraints = @UniqueConstraint(columnNames = { "name", "version" })
+    uniqueConstraints = @UniqueConstraint(columnNames = { "tenant_id", "name", "version" })
 )
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class WorkflowDefinitionEntity {
+public class WorkflowDefinitionEntity extends TenantAwareEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
